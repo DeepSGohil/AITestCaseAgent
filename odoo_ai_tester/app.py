@@ -3,6 +3,14 @@ import zipfile
 import io
 import os
 import re
+
+# Enable browser networking when running in Pyodide/stlite
+try:
+    import pyodide_http
+    pyodide_http.patch_all()
+except ImportError:
+    pass
+
 from openai import OpenAI
 
 st.set_page_config(page_title="Odoo AI Test Generator", page_icon="🤖", layout="wide")
