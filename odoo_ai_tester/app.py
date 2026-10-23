@@ -3,6 +3,9 @@ import zipfile
 import io
 import os
 import re
+import json
+import urllib.request
+import urllib.error
 
 # Enable browser networking when running in Pyodide/stlite
 try:
@@ -10,8 +13,6 @@ try:
     pyodide_http.patch_all()
 except ImportError:
     pass
-
-from openai import OpenAI
 
 st.set_page_config(page_title="Odoo AI Test Generator", page_icon="🤖", layout="wide")
 
@@ -26,11 +27,37 @@ st.sidebar.header("Configuration")
 api_key = st.sidebar.text_input("OpenAI API Key", type="password")
 model_choice = st.sidebar.selectbox("Model", ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"])
 
-def get_openai_client():
+def call_openai_chat(api_key, model, messages, temperature=0.2):
     if not api_key:
         st.warning("Please enter your OpenAI API key in the sidebar.")
         return None
-    return OpenAI(api_key=api_key)
+
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key.strip()}",
+    }
+    payload = json.dumps({
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data["choices"][0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8")
+        try:
+            err_json = json.loads(error_body)
+            err_msg = err_json.get("error", {}).get("message", error_body)
+        except Exception:
+            err_msg = error_body
+        raise Exception(f"OpenAI API Error ({e.code}): {err_msg}")
+    except Exception as e:
+        raise Exception(f"Request Error: {e}")
 
 def extract_files_from_zip(uploaded_file):
     with zipfile.ZipFile(uploaded_file, "r") as z:
@@ -72,8 +99,9 @@ with tab1:
     
     if uploaded_zip is not None:
         if st.button("Analyze and Generate Tests (ZIP)", type="primary"):
-            client = get_openai_client()
-            if client:
+            if not api_key:
+                st.warning("Please enter your OpenAI API key in the sidebar.")
+            else:
                 with st.spinner("Analyzing module and generating tests..."):
                     try:
                         module_files = extract_files_from_zip(uploaded_zip)
@@ -108,7 +136,8 @@ with tab1:
                         
                         user_prompt = f"Here is the module code:\\n{context_text}\\nPlease generate or update the tests based on the requirements. Pay attention to the directory structure and paths used in the provided code."
                         
-                        response = client.chat.completions.create(
+                        full_response = call_openai_chat(
+                            api_key=api_key,
                             model=model_choice,
                             messages=[
                                 {"role": "system", "content": sys_prompt},
@@ -116,9 +145,8 @@ with tab1:
                             ],
                             temperature=0.2
                         )
-                        
-                        full_response = response.choices[0].message.content
-                        explanation, updated_files = parse_llm_response(full_response)
+                        if full_response:
+                            explanation, updated_files = parse_llm_response(full_response)
                         
                         st.markdown("### Analysis & Requirement Mapping")
                         st.markdown(explanation)
@@ -154,36 +182,38 @@ with tab2:
     if st.button("Generate Tests (Text)", type="primary"):
         if not text_input.strip():
             st.warning("Please enter some text or code.")
+        elif not api_key:
+            st.warning("Please enter your OpenAI API key in the sidebar.")
         else:
-            client = get_openai_client()
-            if client:
-                with st.spinner("Generating tests..."):
-                    try:
-                        sys_prompt = """
-                        You are an expert Odoo Developer and QA Engineer.
-                        Your task is to generate Odoo test cases based on the provided task description, feature spec, or Python method.
-                        
-                        Requirements:
-                        1. Generate positive, negative, boundary, access-rights, and multi-company test scenarios.
-                        2. Draft Odoo tests using the appropriate testing framework (e.g., TransactionCase).
-                        3. Map each requirement to a test case in your explanation.
-                        4. Highlight requirements that have no corresponding test.
-                        5. CRITICAL: The test cases MUST NOT use `sudo()` anywhere.
-                        
-                        Provide your analysis first, followed by the Python test code in a standard markdown code block.
-                        """
-                        
-                        user_prompt = f"Input:\\n{text_input}\\nPlease generate the tests based on the requirements."
-                        
-                        response = client.chat.completions.create(
-                            model=model_choice,
-                            messages=[
-                                {"role": "system", "content": sys_prompt},
-                                {"role": "user", "content": user_prompt}
-                            ],
-                            temperature=0.2
-                        )
-                        
-                        st.markdown(response.choices[0].message.content)
-                    except Exception as e:
-                        st.error(f"An error occurred: {e}")
+            with st.spinner("Generating tests..."):
+                try:
+                    sys_prompt = """
+                    You are an expert Odoo Developer and QA Engineer.
+                    Your task is to generate Odoo test cases based on the provided task description, feature spec, or Python method.
+                    
+                    Requirements:
+                    1. Generate positive, negative, boundary, access-rights, and multi-company test scenarios.
+                    2. Draft Odoo tests using the appropriate testing framework (e.g., TransactionCase).
+                    3. Map each requirement to a test case in your explanation.
+                    4. Highlight requirements that have no corresponding test.
+                    5. CRITICAL: The test cases MUST NOT use `sudo()` anywhere.
+                    
+                    Provide your analysis first, followed by the Python test code in a standard markdown code block.
+                    """
+                    
+                    user_prompt = f"Input:\n{text_input}\nPlease generate the tests based on the requirements."
+                    
+                    full_response = call_openai_chat(
+                        api_key=api_key,
+                        model=model_choice,
+                        messages=[
+                            {"role": "system", "content": sys_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.2
+                    )
+                    
+                    if full_response:
+                        st.markdown(full_response)
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
