@@ -4,8 +4,7 @@ import io
 import os
 import re
 import json
-import urllib.request
-import urllib.error
+import requests
 
 # Enable browser networking when running in Pyodide/stlite
 try:
@@ -53,25 +52,34 @@ def call_llm_chat(endpoint_url, api_key, model, messages, temperature=0.2):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key.strip()}",
     }
-    payload = json.dumps({
+    payload = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
-    }).encode("utf-8")
+    }
 
-    req = urllib.request.Request(endpoint_url, data=payload, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"]
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8")
-        try:
-            err_json = json.loads(error_body)
-            err_msg = err_json.get("error", {}).get("message", error_body)
-        except Exception:
-            err_msg = error_body
-        raise Exception(f"API Error ({e.code}): {err_msg}")
+        response = requests.post(
+            endpoint_url,
+            json=payload,
+            headers=headers,
+            timeout=180
+        )
+        if response.status_code != 200:
+            try:
+                err_data = response.json()
+                if isinstance(err_data, list) and len(err_data) > 0:
+                    err_msg = err_data[0].get("error", {}).get("message", response.text)
+                elif isinstance(err_data, dict):
+                    err_msg = err_data.get("error", {}).get("message", response.text)
+                else:
+                    err_msg = response.text
+            except Exception:
+                err_msg = response.text
+            raise Exception(f"API Error ({response.status_code}): {err_msg}")
+
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
     except Exception as e:
         raise Exception(f"Request Error: {e}")
 
