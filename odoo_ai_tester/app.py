@@ -235,3 +235,4 @@ with tab2:
                         st.markdown(full_response)
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
+
