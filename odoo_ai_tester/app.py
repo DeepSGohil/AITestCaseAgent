@@ -24,15 +24,31 @@ It analyzes your module to generate **positive, negative, boundary, access-right
 
 # Sidebar for Configuration
 st.sidebar.header("Configuration")
-api_key = st.sidebar.text_input("OpenAI API Key", type="password")
-model_choice = st.sidebar.selectbox("Model", ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"])
+provider = st.sidebar.selectbox(
+    "AI Provider",
+    ["Google Gemini (Free)", "Groq (Free)", "OpenAI (Paid)"]
+)
 
-def call_openai_chat(api_key, model, messages, temperature=0.2):
+if provider == "Google Gemini (Free)":
+    api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Free key from Google AI Studio")
+    st.sidebar.info("💡 [Get a Free Gemini Key](https://aistudio.google.com/app/apikey)")
+    model_choice = st.sidebar.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"])
+    endpoint_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+elif provider == "Groq (Free)":
+    api_key = st.sidebar.text_input("Groq API Key", type="password", help="Free key from Groq Console")
+    st.sidebar.info("💡 [Get a Free Groq Key](https://console.groq.com/keys)")
+    model_choice = st.sidebar.selectbox("Model", ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"])
+    endpoint_url = "https://api.groq.com/openai/v1/chat/completions"
+else:  # OpenAI (Paid)
+    api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+    model_choice = st.sidebar.selectbox("Model", ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"])
+    endpoint_url = "https://api.openai.com/v1/chat/completions"
+
+def call_llm_chat(endpoint_url, api_key, model, messages, temperature=0.2):
     if not api_key:
-        st.warning("Please enter your OpenAI API key in the sidebar.")
+        st.warning("Please enter your API key in the sidebar.")
         return None
 
-    url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key.strip()}",
@@ -43,7 +59,7 @@ def call_openai_chat(api_key, model, messages, temperature=0.2):
         "temperature": temperature,
     }).encode("utf-8")
 
-    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    req = urllib.request.Request(endpoint_url, data=payload, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -55,7 +71,7 @@ def call_openai_chat(api_key, model, messages, temperature=0.2):
             err_msg = err_json.get("error", {}).get("message", error_body)
         except Exception:
             err_msg = error_body
-        raise Exception(f"OpenAI API Error ({e.code}): {err_msg}")
+        raise Exception(f"API Error ({e.code}): {err_msg}")
     except Exception as e:
         raise Exception(f"Request Error: {e}")
 
@@ -100,7 +116,7 @@ with tab1:
     if uploaded_zip is not None:
         if st.button("Analyze and Generate Tests (ZIP)", type="primary"):
             if not api_key:
-                st.warning("Please enter your OpenAI API key in the sidebar.")
+                st.warning("Please enter your API key in the sidebar.")
             else:
                 with st.spinner("Analyzing module and generating tests..."):
                     try:
@@ -136,7 +152,8 @@ with tab1:
                         
                         user_prompt = f"Here is the module code:\\n{context_text}\\nPlease generate or update the tests based on the requirements. Pay attention to the directory structure and paths used in the provided code."
                         
-                        full_response = call_openai_chat(
+                        full_response = call_llm_chat(
+                            endpoint_url=endpoint_url,
                             api_key=api_key,
                             model=model_choice,
                             messages=[
@@ -183,7 +200,7 @@ with tab2:
         if not text_input.strip():
             st.warning("Please enter some text or code.")
         elif not api_key:
-            st.warning("Please enter your OpenAI API key in the sidebar.")
+            st.warning("Please enter your API key in the sidebar.")
         else:
             with st.spinner("Generating tests..."):
                 try:
@@ -203,7 +220,8 @@ with tab2:
                     
                     user_prompt = f"Input:\n{text_input}\nPlease generate the tests based on the requirements."
                     
-                    full_response = call_openai_chat(
+                    full_response = call_llm_chat(
+                        endpoint_url=endpoint_url,
                         api_key=api_key,
                         model=model_choice,
                         messages=[
