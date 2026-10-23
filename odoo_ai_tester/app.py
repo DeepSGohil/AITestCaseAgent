@@ -21,6 +21,50 @@ This AI agent helps Odoo developers generate comprehensive test cases and fix ex
 It analyzes your module to generate **positive, negative, boundary, access-rights, and multi-company test scenarios**.
 """)
 
+# Persistent Key Storage & Configuration
+CONFIG_FILE = os.path.expanduser("~/.odoo_ai_tester_config.json")
+
+def load_cached_keys():
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def save_cached_key(provider_key, key_value):
+    try:
+        data = load_cached_keys()
+        data[provider_key] = key_value
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+def get_default_key(secret_name, cache_key):
+    # 1. Check Streamlit Secrets / Environment
+    try:
+        if hasattr(st, "secrets") and secret_name in st.secrets:
+            return st.secrets[secret_name]
+    except Exception:
+        pass
+    if os.environ.get(secret_name):
+        return os.environ.get(secret_name)
+    
+    # 2. Check local persistent disk cache
+    cached = load_cached_keys().get(cache_key, "")
+    if cached:
+        return cached
+    return ""
+
+if "gemini_key" not in st.session_state:
+    st.session_state["gemini_key"] = get_default_key("GEMINI_API_KEY", "gemini")
+if "groq_key" not in st.session_state:
+    st.session_state["groq_key"] = get_default_key("GROQ_API_KEY", "groq")
+if "openai_key" not in st.session_state:
+    st.session_state["openai_key"] = get_default_key("OPENAI_API_KEY", "openai")
+
 # Sidebar for Configuration
 st.sidebar.header("Configuration")
 provider = st.sidebar.selectbox(
@@ -29,19 +73,61 @@ provider = st.sidebar.selectbox(
 )
 
 if provider == "Google Gemini (Free)":
-    api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Free key from Google AI Studio")
+    api_key_input = st.sidebar.text_input(
+        "Gemini API Key",
+        value=st.session_state["gemini_key"],
+        type="password",
+        help="Free key from Google AI Studio"
+    )
+    if api_key_input != st.session_state["gemini_key"]:
+        st.session_state["gemini_key"] = api_key_input
+        save_cached_key("gemini", api_key_input)
+    api_key = api_key_input
     st.sidebar.info("💡 [Get a Free Gemini Key](https://aistudio.google.com/app/apikey)")
     model_choice = st.sidebar.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"])
     endpoint_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
 elif provider == "Groq (Free)":
-    api_key = st.sidebar.text_input("Groq API Key", type="password", help="Free key from Groq Console")
+    api_key_input = st.sidebar.text_input(
+        "Groq API Key",
+        value=st.session_state["groq_key"],
+        type="password",
+        help="Free key from Groq Console"
+    )
+    if api_key_input != st.session_state["groq_key"]:
+        st.session_state["groq_key"] = api_key_input
+        save_cached_key("groq", api_key_input)
+    api_key = api_key_input
     st.sidebar.info("💡 [Get a Free Groq Key](https://console.groq.com/keys)")
     model_choice = st.sidebar.selectbox("Model", ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"])
     endpoint_url = "https://api.groq.com/openai/v1/chat/completions"
+
 else:  # OpenAI (Paid)
-    api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+    api_key_input = st.sidebar.text_input(
+        "OpenAI API Key",
+        value=st.session_state["openai_key"],
+        type="password"
+    )
+    if api_key_input != st.session_state["openai_key"]:
+        st.session_state["openai_key"] = api_key_input
+        save_cached_key("openai", api_key_input)
+    api_key = api_key_input
     model_choice = st.sidebar.selectbox("Model", ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"])
     endpoint_url = "https://api.openai.com/v1/chat/completions"
+
+# Option to clear saved keys
+with st.sidebar.expander("Key Settings"):
+    if st.button("Clear Saved Keys"):
+        st.session_state["gemini_key"] = ""
+        st.session_state["groq_key"] = ""
+        st.session_state["openai_key"] = ""
+        try:
+            if os.path.exists(CONFIG_FILE):
+                os.remove(CONFIG_FILE)
+        except Exception:
+            pass
+        st.rerun()
+
 
 def call_llm_chat(endpoint_url, api_key, model, messages, temperature=0.2):
     if not api_key:
