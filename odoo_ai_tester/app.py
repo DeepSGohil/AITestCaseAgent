@@ -4,6 +4,7 @@ import io
 import os
 import re
 import json
+import time
 import requests
 
 # Enable browser networking when running in Pyodide/stlite
@@ -144,30 +145,38 @@ def call_llm_chat(endpoint_url, api_key, model, messages, temperature=0.2):
         "temperature": temperature,
     }
 
-    try:
-        response = requests.post(
-            endpoint_url,
-            json=payload,
-            headers=headers,
-            timeout=180
-        )
-        if response.status_code != 200:
-            try:
-                err_data = response.json()
-                if isinstance(err_data, list) and len(err_data) > 0:
-                    err_msg = err_data[0].get("error", {}).get("message", response.text)
-                elif isinstance(err_data, dict):
-                    err_msg = err_data.get("error", {}).get("message", response.text)
-                else:
+    last_error = None
+    for attempt in range(2):
+        try:
+            # timeout=(60, None): 60s connect timeout, NO read timeout (will never time out waiting for code generation)
+            response = requests.post(
+                endpoint_url,
+                json=payload,
+                headers=headers,
+                timeout=(60, None)
+            )
+            if response.status_code != 200:
+                try:
+                    err_data = response.json()
+                    if isinstance(err_data, list) and len(err_data) > 0:
+                        err_msg = err_data[0].get("error", {}).get("message", response.text)
+                    elif isinstance(err_data, dict):
+                        err_msg = err_data.get("error", {}).get("message", response.text)
+                    else:
+                        err_msg = response.text
+                except Exception:
                     err_msg = response.text
-            except Exception:
-                err_msg = response.text
-            raise Exception(f"API Error ({response.status_code}): {err_msg}")
+                raise Exception(f"API Error ({response.status_code}): {err_msg}")
 
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-    except Exception as e:
-        raise Exception(f"Request Error: {e}")
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.exceptions.Timeout as e:
+            last_error = f"Connection timed out (attempt {attempt + 1}). Retrying..."
+            time.sleep(2)
+        except Exception as e:
+            raise Exception(f"Request Error: {e}")
+
+    raise Exception(f"Request Error: {last_error}")
 
 def extract_files_from_zip(uploaded_file):
     with zipfile.ZipFile(uploaded_file, "r") as z:
@@ -216,8 +225,12 @@ with tab1:
                     try:
                         module_files = extract_files_from_zip(uploaded_zip)
                         
-                        # Filter to only .py files for context (to save tokens)
-                        py_files = {k: v.decode('utf-8', errors='ignore') for k, v in module_files.items() if k.endswith('.py')}
+                        # Filter to only .py files for context (ignore cache/hidden/venv files to save tokens)
+                        py_files = {
+                            k: v.decode('utf-8', errors='ignore')
+                            for k, v in module_files.items()
+                            if k.endswith('.py') and not any(part in k for part in ['__pycache__', '/.', '\\.', 'site-packages', 'venv'])
+                        }
                         
                         context_text = ""
                         for path, content in py_files.items():
