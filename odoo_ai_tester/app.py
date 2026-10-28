@@ -16,10 +16,10 @@ except ImportError:
 
 st.set_page_config(page_title="Odoo AI Test Generator", page_icon="🤖", layout="wide")
 
-st.title("🤖 Odoo AI Test Case Generator & Error Solver")
+st.title("🤖 Odoo AI Test Case Generator & Error Solver (Python & JS)")
 st.markdown("""
 This AI agent helps Odoo developers generate comprehensive test cases and fix existing test errors. 
-It analyzes your module to generate **positive, negative, boundary, access-rights, and multi-company test scenarios**.
+It analyzes your module to generate **Python unit tests (`TransactionCase`), JavaScript frontend tests (Odoo Tours & QUnit), and access-rights/multi-company scenarios**.
 """)
 
 # Persistent Key Storage & Configuration
@@ -225,35 +225,48 @@ with tab1:
                     try:
                         module_files = extract_files_from_zip(uploaded_zip)
                         
-                        # Filter to only .py files for context (ignore cache/hidden/venv files to save tokens)
-                        py_files = {
-                            k: v.decode('utf-8', errors='ignore')
-                            for k, v in module_files.items()
-                            if k.endswith('.py') and not any(part in k for part in ['__pycache__', '/.', '\\.', 'site-packages', 'venv'])
-                        }
+                        # Filter relevant files: .py, .js, and UI .xml (ignore cache/hidden/venv/node_modules/min.js)
+                        relevant_files = {}
+                        for k, v in module_files.items():
+                            if any(part in k for part in ['__pycache__', '/.', '\\.', 'site-packages', 'venv', 'node_modules', '.min.js', 'static/lib']):
+                                continue
+                            if k.endswith('.py') or k.endswith('.js') or (k.endswith('.xml') and ('static/src' in k or 'views' in k)):
+                                relevant_files[k] = v.decode('utf-8', errors='ignore')
                         
                         context_text = ""
-                        for path, content in py_files.items():
+                        for path, content in relevant_files.items():
                             context_text += f"\\n--- {path} ---\\n{content}\\n"
                             
                         sys_prompt = """
-                        You are an expert Odoo Developer and QA Engineer.
-                        Your task is to review the provided Odoo module code and generate or fix test cases.
+                        You are an expert Odoo Full-Stack Developer and QA Engineer.
+                        Your task is to review the provided Odoo module code and generate or fix comprehensive automated test cases covering BOTH Python and JavaScript wherever applicable.
                         
                         Requirements:
-                        1. Generate positive, negative, boundary, access-rights, and multi-company test scenarios.
-                        2. Draft Odoo tests using the appropriate testing framework (e.g., TransactionCase).
+                        1. PYTHON BACKEND TESTS:
+                           - Generate positive, negative, boundary, access-rights, and multi-company test scenarios.
+                           - Draft Odoo tests using `TransactionCase`.
+                           - CRITICAL: The test cases MUST NOT use `sudo()` anywhere.
+                           - Provide or update `tests/__init__.py` to import all Python test files.
+                        
+                        2. JAVASCRIPT FRONTEND & TOUR TESTS (Whenever UI, views, controllers, or frontend JS/OWL exist):
+                           - Create Odoo Tour test files (e.g., `static/src/js/tours/test_something.js` or `static/tests/tours/test_something.js`) to simulate user workflows (clicking buttons, filling forms, checking error notifications).
+                           - Provide the corresponding Python test runner file using `HttpCase` (e.g., `tests/test_tour.py`) with `self.start_tour(...)`.
+                           - For custom OWL components or widgets, generate QUnit / OWL component unit tests.
+                           - If the module is strictly backend-only (no UI/actions/views), state that JS tests are not required.
+                        
                         3. Map each requirement to a test case in your explanation.
                         4. Highlight requirements that have no corresponding test.
-                        5. CRITICAL: The test cases MUST NOT use `sudo()` anywhere.
-                        6. If tests already exist, review them, fix any errors, and add missing scenarios.
-                        7. Make sure you also provide the `tests/__init__.py` file if it's missing or needs updating to import new test files.
+                        5. If tests already exist, review them, fix any errors, and add missing scenarios.
                         
                         Output format:
                         Provide your analysis and requirement mapping in markdown.
                         Whenever you need to create or update a file, wrap the exact file content like this:
                         [FILE: module_name/tests/test_something.py]
                         # file content here
+                        [/FILE]
+                        
+                        [FILE: module_name/static/src/js/tours/test_something.js]
+                        // js tour content here
                         [/FILE]
                         """
                         
@@ -278,8 +291,9 @@ with tab1:
                         if updated_files:
                             st.markdown("### Generated / Updated Files")
                             for path, content in updated_files.items():
+                                lang = "javascript" if path.endswith('.js') else ("xml" if path.endswith('.xml') else "python")
                                 with st.expander(f"📄 {path}"):
-                                    st.code(content, language="python")
+                                    st.code(content, language=lang)
                                 # Update the zip files dict
                                 module_files[path] = content
                                 
@@ -312,17 +326,22 @@ with tab2:
             with st.spinner("Generating tests..."):
                 try:
                     sys_prompt = """
-                    You are an expert Odoo Developer and QA Engineer.
-                    Your task is to generate Odoo test cases based on the provided task description, feature spec, or Python method.
+                    You are an expert Odoo Full-Stack Developer and QA Engineer.
+                    Your task is to generate Odoo test cases based on the provided task description, feature spec, Python method, or JavaScript component.
                     
                     Requirements:
-                    1. Generate positive, negative, boundary, access-rights, and multi-company test scenarios.
-                    2. Draft Odoo tests using the appropriate testing framework (e.g., TransactionCase).
-                    3. Map each requirement to a test case in your explanation.
-                    4. Highlight requirements that have no corresponding test.
-                    5. CRITICAL: The test cases MUST NOT use `sudo()` anywhere.
+                    1. PYTHON BACKEND TESTS:
+                       - Generate positive, negative, boundary, access-rights, and multi-company test scenarios using `TransactionCase`.
+                       - CRITICAL: The test cases MUST NOT use `sudo()` anywhere.
                     
-                    Provide your analysis first, followed by the Python test code in a standard markdown code block.
+                    2. JAVASCRIPT FRONTEND & TOUR TESTS (Whenever UI, views, controllers, or frontend JS/OWL are involved):
+                       - Create an Odoo JavaScript Tour (e.g. `web.tour` / `registry.category("web_tour.tours")`) to validate user interactions and flows.
+                       - Provide the corresponding Python test runner using `HttpCase` (`self.start_tour(...)`).
+                       - For custom OWL components or widgets, generate QUnit / OWL component unit tests.
+                    
+                    3. Map each requirement to a test case in your explanation.
+                    
+                    Provide your analysis first, followed by the Python and JavaScript test code in standard markdown code blocks with clear file path suggestions.
                     """
                     
                     user_prompt = f"Input:\n{text_input}\nPlease generate the tests based on the requirements."
